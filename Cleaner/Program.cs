@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.DirectoryServices.AccountManagement;
 using System.IO;
 using System.Linq;
@@ -72,6 +73,7 @@ namespace Cleaner
             {
                 int directoriesRemoved = 0,
                     filesRemoved = 0;
+                var watch = Stopwatch.StartNew();
 
                 Configuration configuration = new XmlSerializer(typeof(Configuration)).Deserialize(new FileStream(configurationFilePath, FileMode.OpenOrCreate)) as Configuration;
 
@@ -145,7 +147,7 @@ namespace Cleaner
                 } while (count > 0);
 
                 Console.Clear();
-                Console.WriteLine("Cleaning finised in {0} seconds.\nRemoved {1} files and {2} directories.");
+                Console.WriteLine("Cleaning finised in {0} seconds.\nRemoved {1} files and {2} directories.", watch.Elapsed.TotalSeconds.ToString("N2"), filesRemoved, directoriesRemoved);
                 Thread.Sleep(3000);
             }
             catch (Exception e)
