@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web;
 using System.Xml.Serialization;
 
 namespace Cleaner
@@ -26,22 +27,24 @@ namespace Cleaner
 
                 File.WriteAllText(configurationFilePath,
 @"<configuration>
-    <copyTo>C:\Users\sterpa1\Desktop\Erik Paldanius</copyTo>
-    <removeEmptyDirectories>true</removeEmptyDirectories>
+    <copyTo>" + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), UserPrincipal.Current.DisplayName) + @"</copyTo>
     
 	<!-- Files matching any of the following patterns will be deleted unless they match any of the do not delete patterns below. -->
     <deletePatterns>
-        <pattern>\.(db|exe|exp|sdf|idb|pdb|ipdb|ilk|ipch|opendb|suo|pch|lib|log|tlog|lastbuildstate|cache|tmp|temp|obj|iobj|gitignore|gitattributes)$</pattern>        <pattern>\.exe$</pattern>
+        <pattern>\.(db|exe|exp|sdf|idb|pdb|ipdb|ilk|ipch|opendb|suo|pch|lib|log|tlog|lastbuildstate|cache|tmp|temp|obj|iobj|gitignore|gitattributes|.+\.DotSettings\.user)$</pattern>
+		<pattern>imgui\.ini$</pattern>
         <pattern>exposedScriptFunctions.txt$</pattern>
         <pattern>.[^\\/]+ Bin[\\/](logs|\.vs|PBS)[\\/].+</pattern>
         <pattern>\.git[\\/].+</pattern>
+        <pattern>\.cache[\\/].+</pattern>
+        <pattern>obj[\\/].+</pattern>
     </deletePatterns>
 	
 	<!-- Files matching any of the following patterns will not be deleted. -->
 	<doNotDeletePatterns>
         <pattern>extlibs[\\/].+\.lib$</pattern>
-        <pattern>^TGA2D/Lib/(freetype_Debug_x64|freetype_Release_x64|avcodec|avdevice|avfilter|avformat|avutil|postproc|swresample|swscale).lib$</pattern>
-        <pattern>.[^\\/]+ Bin[\\/]Application \(([Dd]ebug|[Rr]elease)\).exe</pattern>
+        <pattern>^TGA2D/Lib/(freetype_Debug_x64|freetype_Release_x64|avcodec|avdevice|avfilter|avformat|avutil|postproc|swresample|swscale)\.lib$</pattern>
+        <pattern>.[^\\/]+ Bin[\\/]Application \((Debug|Release)\, (x64|x86)\)\.exe$</pattern>
 	</doNotDeletePatterns>
 </configuration>
 ");
@@ -83,8 +86,6 @@ namespace Cleaner
                 
                 if (configuration.CopyTo != args[0])
                 {
-                    Console.WriteLine("Copying directory...");
-
                     if (Directory.Exists(configuration.CopyTo))
                     {
                         Console.WriteLine("Target directory already exists, do you want to remove it? (Y/N)");
@@ -101,12 +102,17 @@ namespace Cleaner
                     
                     Uri copyToUri = new Uri(configuration.CopyTo + "/");
 
+                    int totalCount = Directory.EnumerateFiles(args[0], "*", SearchOption.AllDirectories).Count();
+                    int count = 0;
+                    
                     DirectoryCopy(args[0], configuration.CopyTo, true, file =>
                     {
-                        string str = copyToUri.MakeRelativeUri(new Uri(file)).OriginalString;
+                        string str = HttpUtility.UrlDecode(copyToUri.MakeRelativeUri(new Uri(file)).ToString());
                         
                         bool delete = removePatterns.Any(o => o.IsMatch(str));
-                        bool doNotDelete = doNotRemovePatterns.Any(o => o.IsMatch(str));
+                        bool doNotDelete = doNotRemovePatterns.Any(
+                            o => o.IsMatch(str)
+                        );
 
                         if (delete && doNotDelete == false)
                         {
@@ -116,7 +122,7 @@ namespace Cleaner
 
                         filesCopied++;
                         return true;
-                    });
+                    }, ref count, totalCount, Stopwatch.StartNew());
                 }
                 
                 Console.Clear();
@@ -130,7 +136,7 @@ namespace Cleaner
             }
         }
 
-        private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs, Func<string, bool> predicate)
+        private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs, Func<string, bool> predicate, ref int currentCount, int totalCount, Stopwatch watch)
         {
             // Get the subdirectories for the specified directory.
             DirectoryInfo dir = new DirectoryInfo(sourceDirName);
@@ -150,6 +156,8 @@ namespace Cleaner
             FileInfo[] files = dir.GetFiles();
             foreach (FileInfo file in files)
             {
+                currentCount++;
+
                 string fullPath = Path.Combine(destDirName, file.Name);
                 if (predicate(fullPath))
                 {
@@ -167,13 +175,20 @@ namespace Cleaner
                 }
             }
 
+            if (watch.Elapsed.TotalSeconds >= 0.5f)
+            {
+                Console.Clear();
+                Console.Write("Copying directory... {0}%", ((currentCount * 100) / totalCount).ToString().PadLeft(2));
+                watch.Restart();
+            }
+
             // If copying subdirectories, copy them and their contents to new location.
             if (copySubDirs)
             {
                 foreach (DirectoryInfo subdir in dirs)
                 {
                     string tempPath = Path.Combine(destDirName, subdir.Name);
-                    DirectoryCopy(subdir.FullName, tempPath, true, predicate);
+                    DirectoryCopy(subdir.FullName, tempPath, true, predicate, ref currentCount, totalCount, watch);
                 }
             }
         }
