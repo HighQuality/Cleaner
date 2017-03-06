@@ -11,16 +11,17 @@ namespace Cleaner
     [XmlRoot("configuration")]
     public class Configuration
     {
-        [XmlArray("extensionsToDelete")]
-        [XmlArrayItem("extension")]
-        public HashSet<string> ExtensionsToDelete;
+        [XmlArray("deletePatterns")]
+        [XmlArrayItem("pattern")]
+        public List<string> DeletePatterns;
+
+        [XmlArray("doNotDeletePatterns")]
+        [XmlArrayItem("pattern")]
+        public List<string> DoNotDeletePatterns;
 
         [XmlElement("copyTo")]
         public string CopyTo;
-
-        [XmlElement("copyDirectory")]
-        public bool CopyDirectory;
-
+        
         [XmlElement("removeEmptyDirectories")]
         public bool RemoveEmptyDirectories;
     }

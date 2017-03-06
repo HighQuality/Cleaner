@@ -5,8 +5,10 @@ using System.DirectoryServices.AccountManagement;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Policy;
 using System.Security.Principal;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Serialization;
@@ -22,36 +24,26 @@ namespace Cleaner
             {
                 Console.WriteLine("Generating configuration...");
 
-                File.WriteAllText(configurationFilePath, @"
-
-<configuration>
-    <copyDirectory>true</copyDirectory>
-    <copyTo>" + Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), UserPrincipal.Current.DisplayName) + @"</copyTo>
+                File.WriteAllText(configurationFilePath,
+@"<configuration>
+    <copyTo>C:\Users\sterpa1\Desktop\Erik Paldanius</copyTo>
     <removeEmptyDirectories>true</removeEmptyDirectories>
     
-    <extensionsToDelete>
-        <extension>.db</extension>
-        <extension>.sdf</extension>
-        <extension>.idb</extension>
-        <extension>.pdb</extension>
-        <extension>.ipdb</extension>
-        <extension>.ilk</extension>
-        <extension>.ipch</extension>
-        <extension>.opendb</extension>
-        <extension>.suo</extension>
-        <extension>.pch</extension>
-        <extension>.lib</extension>
-        <extension>.log</extension>
-        <extension>.tlog</extension>
-        <extension>.lastbuildstate</extension>
-        <extension>.cache</extension>
-        <extension>.tmp</extension>
-        <extension>.temp</extension>
-        <extension>.obj</extension>
-        <extension>.iobj</extension>
-    </extensionsToDelete>
+	<!-- Files matching any of the following patterns will be deleted unless they match any of the do not delete patterns below. -->
+    <deletePatterns>
+        <pattern>\.(db|exe|exp|sdf|idb|pdb|ipdb|ilk|ipch|opendb|suo|pch|lib|log|tlog|lastbuildstate|cache|tmp|temp|obj|iobj|gitignore|gitattributes)$</pattern>        <pattern>\.exe$</pattern>
+        <pattern>exposedScriptFunctions.txt$</pattern>
+        <pattern>.[^\\/]+ Bin[\\/](logs|\.vs|PBS)[\\/].+</pattern>
+        <pattern>\.git[\\/].+</pattern>
+    </deletePatterns>
+	
+	<!-- Files matching any of the following patterns will not be deleted. -->
+	<doNotDeletePatterns>
+        <pattern>extlibs[\\/].+\.lib$</pattern>
+        <pattern>^TGA2D/Lib/(freetype_Debug_x64|freetype_Release_x64|avcodec|avdevice|avfilter|avformat|avutil|postproc|swresample|swscale).lib$</pattern>
+        <pattern>.[^\\/]+ Bin[\\/]Application \(([Dd]ebug|[Rr]elease)\).exe</pattern>
+	</doNotDeletePatterns>
 </configuration>
-
 ");
             }
 
@@ -69,19 +61,30 @@ namespace Cleaner
                 return;
             }
 
-            try
-            {
-                int directoriesRemoved = 0,
-                    filesRemoved = 0;
+            // try
+            // {
+                int filesRemoved = 0,
+                    filesCopied = 0;
                 var watch = Stopwatch.StartNew();
 
-                Configuration configuration = new XmlSerializer(typeof(Configuration)).Deserialize(new FileStream(configurationFilePath, FileMode.OpenOrCreate)) as Configuration;
+                Configuration configuration = (Configuration)new XmlSerializer(typeof(Configuration)).Deserialize(new FileStream(configurationFilePath, FileMode.OpenOrCreate));
 
-                var directoryToClean = args[0];
+                List<Regex> removePatterns = new List<Regex>();
+                List<Regex> doNotRemovePatterns = new List<Regex>();
 
-                if (configuration.CopyDirectory && configuration.CopyTo != args[0])
+                foreach (var remove in configuration.DeletePatterns)
+                {
+                    removePatterns.Add(new Regex(remove, RegexOptions.IgnoreCase));
+                }
+                foreach (var doNotRemove in configuration.DoNotDeletePatterns)
+                {
+                    doNotRemovePatterns.Add(new Regex(doNotRemove, RegexOptions.IgnoreCase));
+                }
+                
+                if (configuration.CopyTo != args[0])
                 {
                     Console.WriteLine("Copying directory...");
+
                     if (Directory.Exists(configuration.CopyTo))
                     {
                         Console.WriteLine("Target directory already exists, do you want to remove it? (Y/N)");
@@ -95,69 +98,39 @@ namespace Cleaner
                             return;
                         }
                     }
-                    DirectoryCopy(args[0], configuration.CopyTo, true);
-                    directoryToClean = configuration.CopyTo;
-                }
+                    
+                    Uri copyToUri = new Uri(configuration.CopyTo + "/");
 
-                var cleanUri = new Uri(directoryToClean);
-
-                List<string> filesToRemove = Directory.EnumerateFiles(directoryToClean, "*", SearchOption.AllDirectories).Where(o => configuration.ExtensionsToDelete.Contains(Path.GetExtension(o))).ToList();
-                HashSet<string> directoriesToCheck = new HashSet<string>();
-
-                foreach (var file in filesToRemove)
-                {
-                    var path = Path.Combine(directoryToClean, file);
-                    File.Delete(path);
-                    filesRemoved++;
-
-                    Console.WriteLine("Removed file {0}", file);
-
-                    if (configuration.RemoveEmptyDirectories)
+                    DirectoryCopy(args[0], configuration.CopyTo, true, file =>
                     {
-                        var directory = Path.GetDirectoryName(path);
+                        string str = copyToUri.MakeRelativeUri(new Uri(file)).OriginalString;
+                        
+                        bool delete = removePatterns.Any(o => o.IsMatch(str));
+                        bool doNotDelete = doNotRemovePatterns.Any(o => o.IsMatch(str));
 
-                        while (new Uri(directory).MakeRelativeUri(cleanUri).OriginalString.Length > 0)
+                        if (delete && doNotDelete == false)
                         {
-                            directoriesToCheck.Add(directory);
-                            directory = Directory.GetParent(directory).FullName;
+                            filesRemoved++;
+                            filesCopied++;
+                            return false;
                         }
-                    }
+
+                        return true;
+                    });
                 }
-
-                int count = 0;
-
-                do
-                {
-                    count = 0;
-
-                    foreach (var directory in directoriesToCheck)
-                    {
-                        if (Directory.Exists(directory) == false)
-                            continue;
-
-                        if (Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).FirstOrDefault() == null && Directory.EnumerateDirectories(directory, "*", SearchOption.AllDirectories).FirstOrDefault() == null)
-                        {
-                            count++;
-                            Directory.Delete(directory);
-                            directoriesRemoved++;
-                            Console.WriteLine("Removed empty directory {0}", directory);
-                        }
-                    }
-
-                } while (count > 0);
-
+                
                 Console.Clear();
-                Console.WriteLine("Cleaning finised in {0} seconds.\nRemoved {1} files and {2} directories.", watch.Elapsed.TotalSeconds.ToString("N2"), filesRemoved, directoriesRemoved);
+                Console.WriteLine("Cleaning finised in {0:N2} seconds.\n{1} files were copied\n{2} files were not copied.", watch.Elapsed.TotalSeconds, filesCopied, filesRemoved);
                 Thread.Sleep(3000);
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine("Cleaning failed:\n{0}", e.Message);
-                Console.ReadKey();
-            }
+            // }
+            // catch (Exception e)
+            // {
+            //     Console.WriteLine("Cleaning failed:\n{0}", e.Message);
+            //     Console.ReadKey();
+            // }
         }
 
-        private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
+        private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs, Func<string, bool> predicate)
         {
             // Get the subdirectories for the specified directory.
             DirectoryInfo dir = new DirectoryInfo(sourceDirName);
@@ -170,18 +143,28 @@ namespace Cleaner
             }
 
             DirectoryInfo[] dirs = dir.GetDirectories();
-            // If the destination directory doesn't exist, create it.
-            if (!Directory.Exists(destDirName))
-            {
-                Directory.CreateDirectory(destDirName);
-            }
 
+            bool createdDirectory = false;
+            
             // Get the files in the directory and copy them to the new location.
             FileInfo[] files = dir.GetFiles();
             foreach (FileInfo file in files)
             {
-                string temppath = Path.Combine(destDirName, file.Name);
-                file.CopyTo(temppath, false);
+                string fullPath = Path.Combine(destDirName, file.Name);
+                if (predicate(fullPath))
+                {
+                    if (createdDirectory == false)
+                    {
+                        // If the destination directory doesn't exist, create it.
+                        if (!Directory.Exists(destDirName))
+                        {
+                            Directory.CreateDirectory(destDirName);
+                        }
+
+                        createdDirectory = true;
+                    }
+                    file.CopyTo(fullPath, false);
+                }
             }
 
             // If copying subdirectories, copy them and their contents to new location.
@@ -189,8 +172,8 @@ namespace Cleaner
             {
                 foreach (DirectoryInfo subdir in dirs)
                 {
-                    string temppath = Path.Combine(destDirName, subdir.Name);
-                    DirectoryCopy(subdir.FullName, temppath, copySubDirs);
+                    string tempPath = Path.Combine(destDirName, subdir.Name);
+                    DirectoryCopy(subdir.FullName, tempPath, true, predicate);
                 }
             }
         }
