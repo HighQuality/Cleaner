@@ -61,8 +61,8 @@ namespace Cleaner
                 return;
             }
 
-            // try
-            // {
+            try
+            {
                 int filesRemoved = 0,
                     filesCopied = 0;
                 var watch = Stopwatch.StartNew();
@@ -111,10 +111,10 @@ namespace Cleaner
                         if (delete && doNotDelete == false)
                         {
                             filesRemoved++;
-                            filesCopied++;
                             return false;
                         }
 
+                        filesCopied++;
                         return true;
                     });
                 }
@@ -122,12 +122,12 @@ namespace Cleaner
                 Console.Clear();
                 Console.WriteLine("Cleaning finised in {0:N2} seconds.\n{1} files were copied\n{2} files were not copied.", watch.Elapsed.TotalSeconds, filesCopied, filesRemoved);
                 Thread.Sleep(3000);
-            // }
-            // catch (Exception e)
-            // {
-            //     Console.WriteLine("Cleaning failed:\n{0}", e.Message);
-            //     Console.ReadKey();
-            // }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Cleaning failed:\n{0}", e.Message);
+                Console.ReadKey();
+            }
         }
 
         private static void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs, Func<string, bool> predicate)
